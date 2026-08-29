@@ -1,0 +1,47 @@
+name: Build Linux Binary
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: web/.bun-version
+
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
+        working-directory: web
+
+      - name: Build frontend
+        run: bun run build
+        working-directory: web
+
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake g++ libclang-dev
+
+      - name: Build release
+        run: cargo build --release
+
+      - name: Strip binary
+        run: strip target/release/ds-free-api
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ds-free-api-linux
+          path: |
+            target/release/ds-free-api
+            sha3_wasm_bg.7b9ca65ddd.wasm
+            config.toml
+          retention-days: 7
