@@ -21,6 +21,7 @@ import {
   User,
   Shield,
   Tags,
+  Upload,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
@@ -71,6 +72,9 @@ export function ConfigPage() {
   const [revealedPasswords, setRevealedPasswords] = useState<Record<number, boolean>>({});
   const [oldPassword, setOldPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
+  const [showBatchImport, setShowBatchImport] = useState(false);
+  const [batchText, setBatchText] = useState('');
+  const [batchResult, setBatchResult] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
 
   useEffect(() => {
     apiFetchConfig()
@@ -101,7 +105,7 @@ export function ConfigPage() {
     try {
       const body: Record<string, unknown> = {
         server: config.server,
-        ds_core: config.ds_core,
+        deepseek: config.deepseek,
         proxy: config.proxy,
         admin: {
           password_hash: '',
@@ -110,6 +114,7 @@ export function ConfigPage() {
           old_password: oldPassword,
           new_password: newPassword,
         },
+        accounts: config.accounts,
         api_keys: config.api_keys.map(k => ({
           key: k.key,
           description: k.description,
@@ -154,6 +159,42 @@ export function ConfigPage() {
     }
   };
 
+  const handleBatchImport = () => {
+    if (!batchText.trim()) {
+      setBatchResult({ type: 'err', text: t('config.accounts.batchImportEmpty') });
+      return;
+    }
+    const lines = batchText.split('\n');
+    const newAccounts: typeof config.accounts = [];
+    let skipped = 0;
+    for (const raw of lines) {
+      const line = raw.split('#')[0].trim();
+      if (!line) { skipped++; continue; }
+      const parts = line.split(/\s+/);
+      if (parts.length >= 2) {
+        newAccounts.push({
+          email: parts[0],
+          mobile: '',
+          area_code: '',
+          password: parts[1],
+        });
+      } else {
+        skipped++;
+      }
+    }
+    if (newAccounts.length === 0) {
+      setBatchResult({ type: 'err', text: t('config.accounts.batchImportEmpty') });
+      return;
+    }
+    update(['accounts'], [...config.accounts, ...newAccounts]);
+    setBatchResult({
+      type: 'ok',
+      text: t('config.accounts.batchImportResult', { count: newAccounts.length, skipped }),
+    });
+    setBatchText('');
+    setTimeout(() => { setShowBatchImport(false); setBatchResult(null); }, 1500);
+  };
+
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">{t('config.title')}</h1>
@@ -176,51 +217,51 @@ export function ConfigPage() {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
-          {config.ds_core.accounts.map((a, i) => (
+          {config.accounts.map((a, i) => (
             <div key={i} className="flex flex-wrap items-end gap-2 p-3 border rounded-md">
               <div className="flex-1 min-w-[120px]">
-                <label className="text-xs text-muted-foreground">{t('config.ds_core.accounts.email')}</label>
+                <label className="text-xs text-muted-foreground">{t('config.accounts.email')}</label>
                 <Input
                   value={a.email}
                   onChange={(e) => {
-                    const next = [...config.ds_core.accounts];
+                    const next = [...config.accounts];
                     next[i] = { ...next[i], email: e.target.value };
-                    update(['ds_core', 'accounts'], next);
+                    update(['accounts'], next);
                   }}
                 />
               </div>
               <div className="w-24">
-                <label className="text-xs text-muted-foreground">{t('config.ds_core.accounts.mobile')}</label>
+                <label className="text-xs text-muted-foreground">{t('config.accounts.mobile')}</label>
                 <Input
                   value={a.mobile}
                   onChange={(e) => {
-                    const next = [...config.ds_core.accounts];
+                    const next = [...config.accounts];
                     next[i] = { ...next[i], mobile: e.target.value };
-                    update(['ds_core', 'accounts'], next);
+                    update(['accounts'], next);
                   }}
                 />
               </div>
               <div className="w-20">
-                <label className="text-xs text-muted-foreground">{t('config.ds_core.accounts.areaCode')}</label>
+                <label className="text-xs text-muted-foreground">{t('config.accounts.areaCode')}</label>
                 <Input
                   value={a.area_code}
                   onChange={(e) => {
-                    const next = [...config.ds_core.accounts];
+                    const next = [...config.accounts];
                     next[i] = { ...next[i], area_code: e.target.value };
-                    update(['ds_core', 'accounts'], next);
+                    update(['accounts'], next);
                   }}
                 />
               </div>
               <div className="flex-1 min-w-[120px]">
-                <label className="text-xs text-muted-foreground">{t('config.ds_core.accounts.password')}</label>
+                <label className="text-xs text-muted-foreground">{t('config.accounts.password')}</label>
                 <div className="flex items-center gap-1">
                   <Input
                     type={revealedPasswords[i] ? 'text' : 'password'}
                     value={a.password}
                     onChange={(e) => {
-                      const next = [...config.ds_core.accounts];
+                      const next = [...config.accounts];
                       next[i] = { ...next[i], password: e.target.value };
-                      update(['ds_core', 'accounts'], next);
+                      update(['accounts'], next);
                     }}
                   />
                   <Button
@@ -239,24 +280,53 @@ export function ConfigPage() {
                 variant="ghost"
                 size="icon"
                 className="shrink-0"
-                onClick={() => update(['ds_core', 'accounts'], config.ds_core.accounts.filter((_, j) => j !== i))}
+                onClick={() => update(['accounts'], config.accounts.filter((_, j) => j !== i))}
               >
                 <X className="h-4 w-4" />
               </Button>
             </div>
           ))}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() =>
-              update(['ds_core', 'accounts'], [
-                ...config.ds_core.accounts,
-                { email: '', mobile: '', area_code: '', password: '' },
-              ])
-            }
-          >
-            <Plus className="h-4 w-4 mr-1" /> {t('config.ds_core.accounts.add')}
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                update(['accounts'], [
+                  ...config.accounts,
+                  { email: '', mobile: '', area_code: '', password: '' },
+                ])
+              }
+            >
+              <Plus className="h-4 w-4 mr-1" /> {t('config.accounts.add')}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => { setShowBatchImport(!showBatchImport); setBatchResult(null); }}
+            >
+              <Upload className="h-4 w-4 mr-1" /> {t('config.accounts.batchImport')}
+            </Button>
+          </div>
+          {showBatchImport && (
+            <div className="mt-3 p-3 border rounded-md bg-muted/30 space-y-2">
+              <p className="text-xs text-muted-foreground whitespace-pre-line">{t('config.accounts.batchImportHint')}</p>
+              <textarea
+                className="w-full h-40 p-2 text-sm font-mono border rounded-md resize-y bg-background"
+                value={batchText}
+                onChange={(e) => setBatchText(e.target.value)}
+                placeholder={"user1@example.com pass1\nuser2@example.com pass2"}
+              />
+              {batchResult && (
+                <p className={`text-xs ${batchResult.type === 'ok' ? 'text-green-600' : 'text-red-600'}`}>
+                  {batchResult.text}
+                </p>
+              )}
+              <div className="flex gap-2">
+                <Button size="sm" onClick={handleBatchImport}>{t('config.accounts.batchImportParse')}</Button>
+                <Button size="sm" variant="ghost" onClick={() => { setShowBatchImport(false); setBatchText(''); setBatchResult(null); }}>{t('config.accounts.batchImportCancel')}</Button>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -409,43 +479,43 @@ export function ConfigPage() {
           <div>
             <label className="text-sm text-muted-foreground block mb-1">API Base</label>
             <Input
-              value={config.ds_core.api_base}
-              onChange={(e) => update(['ds_core', 'api_base'], e.target.value)}
+              value={config.deepseek.api_base}
+              onChange={(e) => update(['deepseek', 'api_base'], e.target.value)}
             />
           </div>
           <div>
             <label className="text-sm text-muted-foreground block mb-1">WASM URL</label>
             <Input
-              value={config.ds_core.wasm_url}
-              onChange={(e) => update(['ds_core', 'wasm_url'], e.target.value)}
+              value={config.deepseek.wasm_url}
+              onChange={(e) => update(['deepseek', 'wasm_url'], e.target.value)}
             />
           </div>
           <div>
             <label className="text-sm text-muted-foreground block mb-1">User-Agent</label>
             <Input
-              value={config.ds_core.user_agent}
-              onChange={(e) => update(['ds_core', 'user_agent'], e.target.value)}
+              value={config.deepseek.user_agent}
+              onChange={(e) => update(['deepseek', 'user_agent'], e.target.value)}
             />
           </div>
           <div>
             <label className="text-sm text-muted-foreground block mb-1">Client Version</label>
             <Input
-              value={config.ds_core.client_version}
-              onChange={(e) => update(['ds_core', 'client_version'], e.target.value)}
+              value={config.deepseek.client_version}
+              onChange={(e) => update(['deepseek', 'client_version'], e.target.value)}
             />
           </div>
           <div>
             <label className="text-sm text-muted-foreground block mb-1">Client Platform</label>
             <Input
-              value={config.ds_core.client_platform}
-              onChange={(e) => update(['ds_core', 'client_platform'], e.target.value)}
+              value={config.deepseek.client_platform}
+              onChange={(e) => update(['deepseek', 'client_platform'], e.target.value)}
             />
           </div>
           <div>
             <label className="text-sm text-muted-foreground block mb-1">Client Locale</label>
             <Input
-              value={config.ds_core.client_locale}
-              onChange={(e) => update(['ds_core', 'client_locale'], e.target.value)}
+              value={config.deepseek.client_locale}
+              onChange={(e) => update(['deepseek', 'client_locale'], e.target.value)}
             />
           </div>
         </div>
@@ -454,16 +524,16 @@ export function ConfigPage() {
       {/* ── Models (collapsible) ──────────────────────────────── */}
       <Section title={t('config.sections.models')} icon={Globe}>
         <div className="space-y-3">
-          {config.ds_core.model_types.map((_, i) => (
+          {config.deepseek.model_types.map((_, i) => (
             <div key={i} className="flex flex-wrap items-end gap-2 p-3 border rounded-md">
               <div className="flex-1 min-w-[120px]">
                 <label className="text-xs text-muted-foreground">{t('config.modelsSection.typeName')}</label>
                 <Input
-                  value={config.ds_core.model_types[i]}
+                  value={config.deepseek.model_types[i]}
                   onChange={(e) => {
-                    const next = [...config.ds_core.model_types];
+                    const next = [...config.deepseek.model_types];
                     next[i] = e.target.value;
-                    update(['ds_core', 'model_types'], next);
+                    update(['deepseek', 'model_types'], next);
                   }}
                 />
               </div>
@@ -471,11 +541,11 @@ export function ConfigPage() {
                 <label className="text-xs text-muted-foreground">{t('config.modelsSection.maxInput')}</label>
                 <Input
                   type="number"
-                  value={config.ds_core.max_input_tokens[i]}
+                  value={config.deepseek.max_input_tokens[i]}
                   onChange={(e) => {
-                    const next = [...config.ds_core.max_input_tokens];
+                    const next = [...config.deepseek.max_input_tokens];
                     next[i] = Number(e.target.value);
-                    update(['ds_core', 'max_input_tokens'], next);
+                    update(['deepseek', 'max_input_tokens'], next);
                   }}
                 />
               </div>
@@ -483,11 +553,11 @@ export function ConfigPage() {
                 <label className="text-xs text-muted-foreground">{t('config.modelsSection.maxOutput')}</label>
                 <Input
                   type="number"
-                  value={config.ds_core.max_output_tokens[i]}
+                  value={config.deepseek.max_output_tokens[i]}
                   onChange={(e) => {
-                    const next = [...config.ds_core.max_output_tokens];
+                    const next = [...config.deepseek.max_output_tokens];
                     next[i] = Number(e.target.value);
-                    update(['ds_core', 'max_output_tokens'], next);
+                    update(['deepseek', 'max_output_tokens'], next);
                   }}
                 />
               </div>
@@ -495,22 +565,22 @@ export function ConfigPage() {
                 <label className="text-xs text-muted-foreground">{t('config.modelsSection.inputCharLimit')}</label>
                 <Input
                   type="number"
-                  value={config.ds_core.input_character_limits[i]}
+                  value={config.deepseek.input_character_limits[i]}
                   onChange={(e) => {
-                    const next = [...config.ds_core.input_character_limits];
+                    const next = [...config.deepseek.input_character_limits];
                     next[i] = Number(e.target.value);
-                    update(['ds_core', 'input_character_limits'], next);
+                    update(['deepseek', 'input_character_limits'], next);
                   }}
                 />
               </div>
               <div className="flex-1 min-w-[120px]">
                 <label className="text-xs text-muted-foreground">{t('config.modelsSection.alias')}</label>
                 <Input
-                  value={config.ds_core.model_aliases[i] || ''}
+                  value={config.deepseek.model_aliases[i] || ''}
                   onChange={(e) => {
-                    const next = [...config.ds_core.model_aliases];
+                    const next = [...config.deepseek.model_aliases];
                     next[i] = e.target.value;
-                    update(['ds_core', 'model_aliases'], next);
+                    update(['deepseek', 'model_aliases'], next);
                   }}
                 />
               </div>
@@ -519,17 +589,17 @@ export function ConfigPage() {
                 size="icon"
                 className="shrink-0"
                 onClick={() => {
-                  update(['ds_core', 'model_types'], config.ds_core.model_types.filter((_, j) => j !== i));
-                  update(['ds_core', 'max_input_tokens'], config.ds_core.max_input_tokens.filter((_, j) => j !== i));
+                  update(['deepseek', 'model_types'], config.deepseek.model_types.filter((_, j) => j !== i));
+                  update(['deepseek', 'max_input_tokens'], config.deepseek.max_input_tokens.filter((_, j) => j !== i));
                   update(
-                    ['ds_core', 'max_output_tokens'],
-                    config.ds_core.max_output_tokens.filter((_, j) => j !== i),
+                    ['deepseek', 'max_output_tokens'],
+                    config.deepseek.max_output_tokens.filter((_, j) => j !== i),
                   );
                   update(
-                    ['ds_core', 'input_character_limits'],
-                    config.ds_core.input_character_limits.filter((_, j) => j !== i),
+                    ['deepseek', 'input_character_limits'],
+                    config.deepseek.input_character_limits.filter((_, j) => j !== i),
                   );
-                  update(['ds_core', 'model_aliases'], config.ds_core.model_aliases.filter((_, j) => j !== i));
+                  update(['deepseek', 'model_aliases'], config.deepseek.model_aliases.filter((_, j) => j !== i));
                 }}
               >
                 <X className="h-4 w-4" />
@@ -540,11 +610,11 @@ export function ConfigPage() {
             variant="outline"
             size="sm"
             onClick={() => {
-              update(['ds_core', 'model_types'], [...config.ds_core.model_types, 'new']);
-              update(['ds_core', 'max_input_tokens'], [...config.ds_core.max_input_tokens, 32000]);
-              update(['ds_core', 'max_output_tokens'], [...config.ds_core.max_output_tokens, 8000]);
-              update(['ds_core', 'input_character_limits'], [...config.ds_core.input_character_limits, 2621440]);
-              update(['ds_core', 'model_aliases'], [...config.ds_core.model_aliases, '']);
+              update(['deepseek', 'model_types'], [...config.deepseek.model_types, 'new']);
+              update(['deepseek', 'max_input_tokens'], [...config.deepseek.max_input_tokens, 32000]);
+              update(['deepseek', 'max_output_tokens'], [...config.deepseek.max_output_tokens, 8000]);
+              update(['deepseek', 'input_character_limits'], [...config.deepseek.input_character_limits, 2621440]);
+              update(['deepseek', 'model_aliases'], [...config.deepseek.model_aliases, '']);
             }}
           >
             <Plus className="h-4 w-4 mr-1" /> {t('config.modelsSection.add')}
@@ -558,13 +628,13 @@ export function ConfigPage() {
           <div>
             <label className="text-sm text-muted-foreground block mb-1">{t('config.toolCallTags.extraStarts')}</label>
             <div className="flex flex-wrap gap-2">
-              {config.ds_core.tool_call.extra_starts.map((tag, i) => (
+              {config.deepseek.tool_call.extra_starts.map((tag, i) => (
                 <Badge key={i} variant="secondary" className="gap-1">
                   {tag}
                   <button
                     onClick={() => {
-                      const next = config.ds_core.tool_call.extra_starts.filter((_, j) => j !== i);
-                      update(['ds_core', 'tool_call', 'extra_starts'], next);
+                      const next = config.deepseek.tool_call.extra_starts.filter((_, j) => j !== i);
+                      update(['deepseek', 'tool_call', 'extra_starts'], next);
                     }}
                   >
                     <X className="h-3 w-3" />
@@ -576,8 +646,8 @@ export function ConfigPage() {
                 placeholder="新标签，回车添加"
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && e.currentTarget.value.trim()) {
-                    update(['ds_core', 'tool_call', 'extra_starts'], [
-                      ...config.ds_core.tool_call.extra_starts,
+                    update(['deepseek', 'tool_call', 'extra_starts'], [
+                      ...config.deepseek.tool_call.extra_starts,
                       e.currentTarget.value.trim(),
                     ]);
                     e.currentTarget.value = '';
@@ -589,13 +659,13 @@ export function ConfigPage() {
           <div>
             <label className="text-sm text-muted-foreground block mb-1">{t('config.toolCallTags.extraEnds')}</label>
             <div className="flex flex-wrap gap-2">
-              {config.ds_core.tool_call.extra_ends.map((tag, i) => (
+              {config.deepseek.tool_call.extra_ends.map((tag, i) => (
                 <Badge key={i} variant="secondary" className="gap-1">
                   {tag}
                   <button
                     onClick={() => {
-                      const next = config.ds_core.tool_call.extra_ends.filter((_, j) => j !== i);
-                      update(['ds_core', 'tool_call', 'extra_ends'], next);
+                      const next = config.deepseek.tool_call.extra_ends.filter((_, j) => j !== i);
+                      update(['deepseek', 'tool_call', 'extra_ends'], next);
                     }}
                   >
                     <X className="h-3 w-3" />
@@ -607,8 +677,8 @@ export function ConfigPage() {
                 placeholder="新标签，回车添加"
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && e.currentTarget.value.trim()) {
-                    update(['ds_core', 'tool_call', 'extra_ends'], [
-                      ...config.ds_core.tool_call.extra_ends,
+                    update(['deepseek', 'tool_call', 'extra_ends'], [
+                      ...config.deepseek.tool_call.extra_ends,
                       e.currentTarget.value.trim(),
                     ]);
                     e.currentTarget.value = '';
@@ -625,7 +695,7 @@ export function ConfigPage() {
         <div>
             <label className="text-sm text-muted-foreground block mb-1">{t('config.proxy.url')}</label>
           <Input
-            value={config.proxy?.url || ''}
+            value={config.proxy.url || ''}
             placeholder={t('config.proxy.placeholder')}
             onChange={(e) => update(['proxy', 'url'], e.target.value || null)}
           />
