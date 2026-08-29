@@ -79,7 +79,14 @@
       "mobile": "Mobile",
       "areaCode": "Area Code",
       "password": "Password",
-      "add": "Add Account"
+      "add": "Add Account",
+      "batchImport": "Batch Import",
+      "batchImportTitle": "Batch Import Accounts",
+      "batchImportHint": "One account per line, format: email password\nLines starting with # are comments\nEmpty lines are skipped",
+      "batchImportParse": "Parse & Add",
+      "batchImportCancel": "Cancel",
+      "batchImportResult": "Parsed {count} valid accounts, {skipped} skipped",
+      "batchImportEmpty": "Please enter account data"
     },
     "apiKeys": {
       "description": "Description",
