@@ -79,7 +79,14 @@
       "mobile": "手机",
       "areaCode": "区号",
       "password": "密码",
-      "add": "添加账号"
+      "add": "添加账号",
+      "batchImport": "批量导入",
+      "batchImportTitle": "批量导入账号",
+      "batchImportHint": "每行一个账号，格式：邮箱 密码\n# 号后面是注释，会被忽略\n空行会被跳过",
+      "batchImportParse": "解析并添加",
+      "batchImportCancel": "取消",
+      "batchImportResult": "已解析 {count} 个有效账号，{skipped} 个跳过",
+      "batchImportEmpty": "请输入账号数据"
     },
     "apiKeys": {
       "description": "描述",
