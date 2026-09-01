@@ -1,0 +1,18 @@
+﻿[Unit]
+Description=DS Free API Service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/ds-free-api
+ExecStart=/opt/ds-free-api/ds-free-api
+Restart=always
+RestartSec=5
+Environment=DS_DATA_DIR=/opt/ds-free-api
+Environment=RUST_LOG=info
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,55 @@
+name: Build
+
+on:
+  push:
+    branches: [master, main]
+  workflow_dispatch:
+
+jobs:
+  build-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: web/.bun-version
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+        working-directory: web
+      - name: Build frontend
+        run: bun run build
+        working-directory: web
+      - name: Upload frontend artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist/
+          if-no-files-found: error
+
+  build:
+    needs: [build-frontend]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download frontend assets
+        uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist/
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: 1.95.0
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake g++ libclang-dev
+      - name: Build release binary
+        run: cargo build --release
+      - name: Strip binary
+        run: strip target/release/ds-free-api
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ds-free-api-linux
+          path: target/release/ds-free-api
+          retention-days: 7
