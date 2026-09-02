@@ -507,7 +507,7 @@ impl Completions {
                     target: "ds_core::accounts",
                     "req={} hint 限流: rate_limit_reached", request_id
                 );
-                self.pool.mark_error(&account_id);
+                self.pool.record_rate_limit(&account_id, 30);
             } else {
                 let hint_detail = second_block
                     .lines()
@@ -523,6 +523,7 @@ impl Completions {
                     target: "ds_core::accounts",
                     "req={} hint 错误: {}", request_id, hint_detail
                 );
+                self.pool.mark_error(&account_id);
             }
             let _ = client.delete_session(&token, &session_id).await;
             return Err(err);
@@ -532,6 +533,8 @@ impl Completions {
             target: "ds_core::accounts",
             "req={} SSE ready: resp_msg={}", request_id, stop_id
         );
+
+        self.pool.record_success(&account_id);
 
         // 注册活跃 session
         {
@@ -774,8 +777,8 @@ impl Completions {
                     target: "ds_core::accounts",
                     "req={} hint 限流: rate_limit_reached", request_id
                 );
-                // rate_limit 是账号级限流，标记 Error 触发换号重试
-                self.pool.mark_error(&account_id);
+                // rate_limit 是账号级限流，施加软冷却并触发换号重试
+                self.pool.record_rate_limit(&account_id, 30);
             } else {
                 let hint_detail = second_block
                     .lines()
@@ -791,6 +794,7 @@ impl Completions {
                     target: "ds_core::accounts",
                     "req={} hint 错误: {}", request_id, hint_detail
                 );
+                self.pool.mark_error(&account_id);
             }
             let _ = client.delete_session(&token, &session_id).await;
             log::debug!(
@@ -804,6 +808,8 @@ impl Completions {
             target: "ds_core::accounts",
             "req={} SSE ready: resp_msg={}", request_id, stop_id
         );
+
+        self.pool.record_success(&account_id);
 
         // 9. 注册活跃 session（含 message_id 用于 stop_stream）
         {

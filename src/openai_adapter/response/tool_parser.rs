@@ -279,14 +279,100 @@ fn repair_unquoted_keys(s: &str) -> String {
     out
 }
 
+fn normalize_windows_paths(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let chars: Vec<char> = s.chars().collect();
+    let len = chars.len();
+    let mut i = 0;
+    let mut in_str = false;
+
+    while i < len {
+        let c = chars[i];
+        if c == '"' && (i == 0 || chars[i - 1] != '\\') {
+            in_str = !in_str;
+            out.push(c);
+            i += 1;
+            continue;
+        }
+
+        // 在字符串字面量中，检测类似 C:\ 或 d:\ 的 Windows 盘符路径
+        if in_str
+            && i + 2 < len
+            && chars[i].is_ascii_alphabetic()
+            && chars[i + 1] == ':'
+            && chars[i + 2] == '\\'
+        {
+            out.push(chars[i]);
+            out.push(':');
+            out.push('/');
+            i += 3;
+            // 将该路径后续的单反斜杠转为正斜杠，防止 \t, \b, \n 等字符被错误解析
+            while i < len {
+                if chars[i] == '"' && chars[i - 1] != '\\' {
+                    in_str = false;
+                    out.push('"');
+                    i += 1;
+                    break;
+                }
+                if chars[i] == '\\' {
+                    // 若紧随另一个反斜杠则跳过重复
+                    if i + 1 < len && chars[i + 1] == '\\' {
+                        i += 1;
+                    }
+                    out.push('/');
+                } else {
+                    out.push(chars[i]);
+                }
+                i += 1;
+            }
+            continue;
+        }
+
+        out.push(c);
+        i += 1;
+    }
+    out
+}
+
+fn auto_close_json(s: &str) -> String {
+    let mut trimmed = s.trim().to_string();
+    let open_braces = trimmed.chars().filter(|&c| c == '{').count();
+    let close_braces = trimmed.chars().filter(|&c| c == '}').count();
+    let open_brackets = trimmed.chars().filter(|&c| c == '[').count();
+    let close_brackets = trimmed.chars().filter(|&c| c == ']').count();
+
+    if open_braces > close_braces {
+        for _ in 0..(open_braces - close_braces) {
+            trimmed.push('}');
+        }
+    }
+    if open_brackets > close_brackets {
+        for _ in 0..(open_brackets - close_brackets) {
+            trimmed.push(']');
+        }
+    }
+    trimmed
+}
+
 fn repair_json(s: &str) -> Option<String> {
-    let step1 = repair_invalid_backslashes(s);
+    if serde_json::from_str::<serde_json::Value>(s).is_ok() {
+        return Some(s.to_string());
+    }
+    let path_norm = normalize_windows_paths(s);
+    if serde_json::from_str::<serde_json::Value>(&path_norm).is_ok() {
+        return Some(path_norm);
+    }
+    let step1 = repair_invalid_backslashes(&path_norm);
     if serde_json::from_str::<serde_json::Value>(&step1).is_ok() {
         return Some(step1);
     }
     let step2 = repair_unquoted_keys(&step1);
     if serde_json::from_str::<serde_json::Value>(&step2).is_ok() {
         return Some(step2);
+    }
+    let step3 = auto_close_json(&step2);
+    if serde_json::from_str::<serde_json::Value>(&step3).is_ok() {
+        return Some(step3);
     }
     None
 }

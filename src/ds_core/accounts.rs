@@ -3,7 +3,7 @@
 //! 1 account = 1 session = 1 concurrency。多并发需横向扩展账号数。
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicI64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU64, AtomicU8, Ordering};
 use std::time::SystemTime;
 
 use dashmap::DashMap;
@@ -53,8 +53,16 @@ pub struct AccountStatus {
     pub state: String,
     /// 最后释放时间戳（ms），0 表示从未使用
     pub last_released_ms: i64,
+    /// 软冷却截止时间戳（ms）
+    pub cooldown_until_ms: i64,
+    /// 动态健康评分 (0~100)
+    pub health_score: u8,
     /// 连续登录失败次数
     pub error_count: u8,
+    /// 累计成功请求数
+    pub success_count: u64,
+    /// 累计失败/限流请求数
+    pub failure_count: u64,
 }
 
 pub struct Account {
@@ -64,8 +72,16 @@ pub struct Account {
     state: AtomicU8,
     /// 账号最近一次释放的时间戳（ms），用于冷却判断
     last_released: AtomicI64,
+    /// 软冷却截止时间戳（ms），0 表示未处于冷却
+    cooldown_until: AtomicI64,
+    /// 动态健康评分 (0~100)
+    health_score: AtomicU8,
     /// 连续登录失败次数
     error_count: AtomicU8,
+    /// 累计成功请求数
+    success_count: AtomicU64,
+    /// 累计失败/限流请求数
+    failure_count: AtomicU64,
     /// 原始凭据（用于重新登录）
     creds: AccountConfig,
 }
@@ -106,7 +122,11 @@ impl Account {
             mobile: creds.mobile.clone(),
             state: AtomicU8::new(AccountState::Invalid as u8),
             last_released: AtomicI64::new(0),
+            cooldown_until: AtomicI64::new(0),
+            health_score: AtomicU8::new(0),
             error_count: AtomicU8::new(MAX_ERROR_COUNT),
+            success_count: AtomicU64::new(0),
+            failure_count: AtomicU64::new(0),
             creds,
         }
     }
@@ -317,7 +337,7 @@ impl AccountPool {
 
     /// 获取空闲最久的可用账号（不等待，立即返回）
     ///
-    /// 遍历所有账号，选冷却已过且空闲时间最长的那个，最大化每次使用间隔。
+    /// 结合健康评分 (Health Score) 与空闲时间加权算法，优先调度健康度高且非软冷却的账号。
     /// DashMap 无锁读，不阻塞并发请求。
     pub fn get_account(&self) -> Option<AccountGuard> {
         if self.accounts.is_empty() {
@@ -330,17 +350,42 @@ impl AccountPool {
         let now_ms = (d.as_secs() * 1000 + u64::from(d.subsec_millis())) as i64;
 
         let mut best: Option<Arc<Account>> = None;
-        let mut best_idle = i64::MIN;
+        let mut best_weight = i64::MIN;
 
         for entry in self.accounts.iter() {
             let account = entry.value();
             if !account.is_available() {
                 continue;
             }
+            // 检查是否仍在软冷却期
+            let cooldown_until = account.cooldown_until.load(Ordering::Relaxed);
+            if now_ms < cooldown_until {
+                continue;
+            }
+
             let idle = now_ms - account.last_released.load(Ordering::Relaxed);
-            if idle > best_idle {
-                best_idle = idle;
+            let score = account.health_score.load(Ordering::Relaxed) as i64;
+            // 综合权重：健康评分优先（每1分相当于 1000 秒空闲权重），同健康度选空闲最久的
+            let weight = score * 1_000_000 + idle.clamp(0, 10_000_000);
+
+            if weight > best_weight {
+                best_weight = weight;
                 best = Some(Arc::clone(account));
+            }
+        }
+
+        // 如果所有可用账号都在软冷却中，但存在可用账号，则降级挑选冷却最接近结束的可用账号
+        if best.is_none() {
+            let mut earliest_cooldown = i64::MAX;
+            for entry in self.accounts.iter() {
+                let account = entry.value();
+                if account.is_available() {
+                    let cd = account.cooldown_until.load(Ordering::Relaxed);
+                    if cd < earliest_cooldown {
+                        earliest_cooldown = cd;
+                        best = Some(Arc::clone(account));
+                    }
+                }
             }
         }
 
@@ -357,6 +402,47 @@ impl AccountPool {
         Some(AccountGuard { account })
     }
 
+    /// 记录账号调用成功：提升健康分，清空连续失败
+    pub fn record_success(&self, email_or_mobile: &str) {
+        if let Some(entry) = self.accounts.get(email_or_mobile) {
+            let account = entry.value();
+            account.error_count.store(0, Ordering::Relaxed);
+            account.success_count.fetch_add(1, Ordering::Relaxed);
+            let current_score = account.health_score.load(Ordering::Relaxed);
+            if current_score < 100 {
+                account
+                    .health_score
+                    .store((current_score + 2).min(100), Ordering::Relaxed);
+            }
+        }
+    }
+
+    /// 记录账号限流 (Overloaded / 429)：施加软冷却并降低健康分
+    pub fn record_rate_limit(&self, email_or_mobile: &str, cooldown_secs: u64) {
+        if let Some(entry) = self.accounts.get(email_or_mobile) {
+            let account = entry.value();
+            account.failure_count.fetch_add(1, Ordering::Relaxed);
+            let d = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap_or_default();
+            let now_ms = (d.as_secs() * 1000 + u64::from(d.subsec_millis())) as i64;
+            account
+                .cooldown_until
+                .store(now_ms + (cooldown_secs as i64 * 1000), Ordering::Relaxed);
+            let current_score = account.health_score.load(Ordering::Relaxed);
+            account
+                .health_score
+                .store(current_score.saturating_sub(10).max(10), Ordering::Relaxed);
+            warn!(
+                target: "ds_core::accounts",
+                "账号 {} 触发限流，进入 {} 秒软冷却 (当前健康分: {})",
+                account.display_id(),
+                cooldown_secs,
+                account.health_score.load(Ordering::Relaxed)
+            );
+        }
+    }
+
     /// 获取所有账号的详细状态
     pub fn account_statuses(&self) -> Vec<AccountStatus> {
         self.accounts
@@ -368,7 +454,11 @@ impl AccountPool {
                     mobile: a.mobile.clone(),
                     state: a.state().as_str().to_string(),
                     last_released_ms: a.last_released.load(Ordering::Relaxed),
+                    cooldown_until_ms: a.cooldown_until.load(Ordering::Relaxed),
+                    health_score: a.health_score.load(Ordering::Relaxed),
                     error_count: a.error_count.load(Ordering::Relaxed),
+                    success_count: a.success_count.load(Ordering::Relaxed),
+                    failure_count: a.failure_count.load(Ordering::Relaxed),
                 }
             })
             .collect()
@@ -387,6 +477,11 @@ impl AccountPool {
     pub fn mark_error(&self, email_or_mobile: &str) {
         if let Some(entry) = self.accounts.get(email_or_mobile) {
             let account = entry.value();
+            account.failure_count.fetch_add(1, Ordering::Relaxed);
+            let current_score = account.health_score.load(Ordering::Relaxed);
+            account
+                .health_score
+                .store(current_score.saturating_sub(25), Ordering::Relaxed);
             // 只从 Busy 转到 Error（避免覆盖 Invalid）
             account
                 .state
@@ -397,7 +492,12 @@ impl AccountPool {
                     Ordering::Relaxed,
                 )
                 .ok();
-            warn!(target: "ds_core::accounts", "账号 {} 标记为 Error", account.display_id());
+            warn!(
+                target: "ds_core::accounts",
+                "账号 {} 标记为 Error (健康分: {})",
+                account.display_id(),
+                account.health_score.load(Ordering::Relaxed)
+            );
         }
     }
 
@@ -448,6 +548,8 @@ impl AccountPool {
                     .state
                     .store(AccountState::Idle as u8, Ordering::Relaxed);
                 account.error_count.store(0, Ordering::Relaxed);
+                account.health_score.store(100, Ordering::Relaxed);
+                account.cooldown_until.store(0, Ordering::Relaxed);
                 info!(target: "ds_core::accounts", "账号 {} 重新登录成功", display_id);
             }
             Err(e) => {
@@ -456,6 +558,7 @@ impl AccountPool {
                     account
                         .state
                         .store(AccountState::Invalid as u8, Ordering::Relaxed);
+                    account.health_score.store(0, Ordering::Relaxed);
                     error!(target: "ds_core::accounts", "账号 {} 连续 {} 次重登失败，标记为 Invalid: {}", display_id, count, e);
                 } else {
                     warn!(target: "ds_core::accounts", "账号 {} 重登失败 ({}次): {}", display_id, count, e);
@@ -464,12 +567,14 @@ impl AccountPool {
         }
     }
 
-    /// 启动后台恢复任务：每 60 秒扫描 Error 账号并尝试重新登录
+    /// 启动后台自愈任务：周期性解冻软冷却、重登 Error 账号并对 Invalid 账号退避探测
     pub fn start_recovery_task(self: &Arc<Self>) {
         let pool = Arc::clone(self);
         tokio::spawn(async move {
+            let mut tick_counter: u64 = 0;
             loop {
-                tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
+                tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+                tick_counter += 1;
 
                 let client_opt = pool.client.read().await.clone();
                 let solver_opt = pool.solver.read().await.clone();
@@ -477,9 +582,39 @@ impl AccountPool {
                     continue;
                 };
 
+                let d = SystemTime::now()
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap_or_default();
+                let now_ms = (d.as_secs() * 1000 + u64::from(d.subsec_millis())) as i64;
+
                 for entry in pool.accounts.iter() {
                     let account = entry.value();
-                    if account.state() == AccountState::Error {
+                    let state = account.state();
+
+                    // 1. 软冷却自动解冻与健康自愈
+                    let cd = account.cooldown_until.load(Ordering::Relaxed);
+                    if cd > 0 && now_ms >= cd {
+                        account.cooldown_until.store(0, Ordering::Relaxed);
+                        let score = account.health_score.load(Ordering::Relaxed);
+                        if score < 100 && state == AccountState::Idle {
+                            account
+                                .health_score
+                                .store((score + 5).min(100), Ordering::Relaxed);
+                        }
+                    }
+
+                    // 2. Error 状态自动重新登录
+                    if state == AccountState::Error {
+                        Self::re_login_account(account, &client, &solver).await;
+                    }
+
+                    // 3. Invalid 状态每 10 分钟 (20 ticks) 尝试一次退避探测自愈
+                    if state == AccountState::Invalid && tick_counter % 20 == 0 {
+                        info!(
+                            target: "ds_core::accounts",
+                            "账号 {} (Invalid) 触发周期性自愈探测",
+                            account.display_id()
+                        );
                         Self::re_login_account(account, &client, &solver).await;
                     }
                 }
@@ -562,7 +697,11 @@ async fn try_init_account(
         mobile: creds.mobile.clone(),
         state: AtomicU8::new(AccountState::Idle as u8),
         last_released: AtomicI64::new(0),
+        cooldown_until: AtomicI64::new(0),
+        health_score: AtomicU8::new(100),
         error_count: AtomicU8::new(0),
+        success_count: AtomicU64::new(0),
+        failure_count: AtomicU64::new(0),
         creds: creds.clone(),
     })
 }

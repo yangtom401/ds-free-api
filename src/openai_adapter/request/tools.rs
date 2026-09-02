@@ -239,6 +239,12 @@ fn build_tool_instruction_block(req: &ChatCompletionsRequest) -> String {
     lines.push(
         "12. **关键指令：当使用修改文件内容的工具（如 Edit, Replace, Update 等）时，你提供的旧代码块（old_string 或 SEARCH block）必须包含足够的上下文（前后若干行未修改的代码），以确保它在整个文件中是 100% 唯一的！绝对不能只提供单行常见代码（例如 `except: return None`），否则会导致匹配失败并引发 Error！**".to_string(),
     );
+    lines.push(
+        "13. **路径规范：所有文件路径参数必须使用标准正斜杠 `/`（例如 `D:/APP/test/backend/app.py` 或 `/opt/app/main.py`），严禁使用反斜杠 `\\`，以防止 JSON 转义字符损毁路径。**".to_string(),
+    );
+    lines.push(
+        "14. **严禁臆测：决定调用工具时，严禁在同一回复中自行编造或臆测工具返回结果，输出闭合标签后必须立即停止并等待客户端真实返回。**".to_string(),
+    );
     lines.push(String::new());
 
     let tool_names: Vec<String> = req
