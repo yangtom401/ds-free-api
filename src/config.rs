@@ -66,13 +66,36 @@ pub struct ProxyConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Account {
     /// 邮箱（与 mobile 二选一）
+    #[serde(default)]
     pub email: String,
     /// 手机号（与 email 二选一）
+    #[serde(default)]
     pub mobile: String,
     /// 区号（与 mobile 配合使用，如 "+86"）
+    #[serde(default)]
     pub area_code: String,
     /// 密码
+    #[serde(default)]
     pub password: String,
+    /// 直接提供的 userToken（可选，如果提供则跳过密码登录直接使用）
+    #[serde(default)]
+    pub token: Option<String>,
+}
+
+impl Account {
+    /// 获取账号唯一标识（优先 email，其次 mobile，若均为 token 用户则显示 token 前缀）
+    pub fn display_id(&self) -> String {
+        if !self.email.is_empty() {
+            self.email.clone()
+        } else if !self.mobile.is_empty() {
+            self.mobile.clone()
+        } else if let Some(ref t) = self.token {
+            let prefix = if t.len() > 10 { &t[..10] } else { t };
+            format!("token:{}...", prefix)
+        } else {
+            "unknown".to_string()
+        }
+    }
 }
 
 /// DeepSeek 客户端配置

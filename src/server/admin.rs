@@ -375,6 +375,7 @@ pub(crate) async fn admin_check_account(
         password: req.password.clone(),
         mobile: String::new(),
         area_code: String::new(),
+        token: None,
     };
 
     match state.adapter.add_account(&creds).await {

@@ -377,7 +377,7 @@ mod tests {
     use futures::StreamExt;
 
     use crate::anthropic_compat::types::{
-        ContentBlockDelta, MessagesResponseChunk, ResponseContentBlock,
+        MessagesResponseChunk, ResponseContentBlock,
     };
     use crate::openai_adapter::OpenAIAdapterError;
     use crate::openai_adapter::types::{
@@ -738,18 +738,14 @@ mod tests {
         assert_eq!(events[1].event_name(), "content_block_start");
         // text delta
         assert_eq!(events[2].event_name(), "content_block_delta");
-        // keepalive → transition: stop text, start thinking
-        assert_eq!(events[3].event_name(), "content_block_stop");
-        assert_eq!(events[4].event_name(), "content_block_start");
-        assert_eq!(events[5].event_name(), "content_block_delta");
-        // content arrives → transition: stop thinking, start new text
-        assert_eq!(events[6].event_name(), "content_block_stop");
-        assert_eq!(events[7].event_name(), "content_block_start");
-        assert_eq!(events[8].event_name(), "content_block_delta");
+        // keepalive → 标准 ping（不打断文本块）
+        assert_eq!(events[3].event_name(), "ping");
+        // content arrives → 继续输出文本 delta
+        assert_eq!(events[4].event_name(), "content_block_delta");
         // finish: stop text + message_delta + message_stop
-        assert_eq!(events[9].event_name(), "content_block_stop");
-        assert_eq!(events[10].event_name(), "message_delta");
-        assert_eq!(events[11].event_name(), "message_stop");
+        assert_eq!(events[5].event_name(), "content_block_stop");
+        assert_eq!(events[6].event_name(), "message_delta");
+        assert_eq!(events[7].event_name(), "message_stop");
     }
 
     #[tokio::test]
@@ -761,17 +757,8 @@ mod tests {
             finish_chunk("stop"),
         ])
         .await;
-        // keepalive emits thinking delta with "tool_calls..."
-        let keepalive_delta = &events[5];
-        if let MessagesResponseChunk::ContentBlockDelta { delta, .. } = keepalive_delta {
-            if let ContentBlockDelta::Thinking { thinking } = delta {
-                assert_eq!(thinking, "tool_calls...");
-            } else {
-                panic!("expected Thinking delta");
-            }
-        } else {
-            panic!("expected ContentBlockDelta");
-        }
+        // keepalive emits ping
+        assert_eq!(events[3].event_name(), "ping");
     }
 
     #[tokio::test]
@@ -801,11 +788,14 @@ mod tests {
             finish_chunk("stop"),
         ])
         .await;
-        // message_start → message_delta → message_stop
-        assert_eq!(events.len(), 3);
+        // 没有内容输出时，根据规范补充一个空的 text content_block，防止下游客户端因空内容报错
+        // message_start → content_block_start → content_block_stop → message_delta → message_stop
+        assert_eq!(events.len(), 5);
         assert_eq!(events[0].event_name(), "message_start");
-        assert_eq!(events[1].event_name(), "message_delta");
-        assert_eq!(events[2].event_name(), "message_stop");
+        assert_eq!(events[1].event_name(), "content_block_start");
+        assert_eq!(events[2].event_name(), "content_block_stop");
+        assert_eq!(events[3].event_name(), "message_delta");
+        assert_eq!(events[4].event_name(), "message_stop");
     }
 
     #[tokio::test]
@@ -816,15 +806,15 @@ mod tests {
         ])
         .await;
         // graceful shutdown: message_start → text block → ...stop?
-        // stream end without finish_reason: transition_to(None) + message_delta + message_stop
+        // stream end without finish_reason: transition_to(None) + message_delta("end_turn") + message_stop
         assert!(events.last().is_some());
         assert_eq!(events.last().unwrap().event_name(), "message_stop");
         // should have message_delta before message_stop
         let delta_idx = events.len() - 2;
         assert_eq!(events[delta_idx].event_name(), "message_delta");
-        // stop_reason should be None for graceful shutdown
+        // stop_reason should be "end_turn" for graceful shutdown
         if let MessagesResponseChunk::MessageDelta { stop_reason, .. } = &events[delta_idx] {
-            assert_eq!(stop_reason, &None);
+            assert_eq!(stop_reason.as_deref(), Some("end_turn"));
         }
     }
 

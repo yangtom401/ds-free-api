@@ -95,10 +95,15 @@ impl Account {
     }
 
     pub fn display_id(&self) -> &str {
-        if self.email.is_empty() {
-            &self.mobile
-        } else {
+        if !self.email.is_empty() {
             &self.email
+        } else if !self.mobile.is_empty() {
+            &self.mobile
+        } else if let Some(ref t) = self.creds.token {
+            let len = t.len().min(10);
+            &t[..len]
+        } else {
+            "unknown"
         }
     }
 
@@ -234,11 +239,7 @@ impl AccountPool {
                 let sem = semaphore.clone();
                 async move {
                     let _permit = sem.acquire().await.expect("信号量未关闭");
-                    let display_id = if creds.email.is_empty() {
-                        creds.mobile.clone()
-                    } else {
-                        creds.email.clone()
-                    };
+                    let display_id = creds.display_id();
                     let account = match init_account(&creds, &client, &solver).await {
                         Ok(account) => {
                             info!(target: "ds_core::accounts", "账号 {} 初始化成功", display_id);
@@ -281,11 +282,7 @@ impl AccountPool {
         client: &DsClient,
         solver: &PowSolver,
     ) -> Result<String, PoolError> {
-        let display_id = if creds.email.is_empty() {
-            creds.mobile.clone()
-        } else {
-            creds.email.clone()
-        };
+        let display_id = creds.display_id();
 
         // 检查是否已存在（DashMap O(1) 查找）
         if self.accounts.contains_key(&display_id) {
@@ -631,11 +628,10 @@ async fn init_account(
     try_init_account(creds, client, solver).await
 }
 
-async fn try_init_account(
+async fn login_with_creds(
     creds: &AccountConfig,
     client: &DsClient,
-    solver: &PowSolver,
-) -> Result<Account, PoolError> {
+) -> Result<String, PoolError> {
     // 验证：email 和 mobile 至少一个非空
     if creds.email.is_empty() && creds.mobile.is_empty() {
         return Err(PoolError::Validation(
@@ -674,17 +670,29 @@ async fn try_init_account(
         login_data.user.email,
         login_data.user.mobile_number
     );
-    let token = login_data.user.token;
+    Ok(login_data.user.token)
+}
 
-    let display_id = if creds.email.is_empty() {
-        &creds.mobile
+async fn try_init_account(
+    creds: &AccountConfig,
+    client: &DsClient,
+    solver: &PowSolver,
+) -> Result<Account, PoolError> {
+    let token = if let Some(ref t) = creds.token {
+        if !t.trim().is_empty() {
+            t.trim().to_string()
+        } else {
+            login_with_creds(creds, client).await?
+        }
     } else {
-        &creds.email
+        login_with_creds(creds, client).await?
     };
+
+    let display_id = creds.display_id();
 
     // 健康检查：创建临时 session → 发送 test completion → 删除 session
     let session_id = client.create_session(&token).await?;
-    if let Err(e) = health_check(&token, &session_id, client, solver, "default", display_id).await {
+    if let Err(e) = health_check(&token, &session_id, client, solver, "default", &display_id).await {
         // 即使健康检查失败也要清理 session
         let _ = client.delete_session(&token, &session_id).await;
         return Err(e);

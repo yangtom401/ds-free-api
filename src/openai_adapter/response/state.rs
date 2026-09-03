@@ -498,8 +498,10 @@ mod tests {
             data: r#"{"p":"response/status","v":"INCOMPLETE"}"#.into(),
         };
         let frames = state.apply_event(&evt);
-        assert_eq!(frames.len(), 1);
-        assert!(matches!(&frames[0], DsFrame::Status(s) if s == "INCOMPLETE"));
+        // 无 RESPONSE 内容时会注入零宽空格占位符 + Status
+        assert_eq!(frames.len(), 2);
+        assert!(matches!(&frames[0], DsFrame::ContentDelta(s) if s == "\u{200b}"));
+        assert!(matches!(&frames[1], DsFrame::Status(s) if s == "INCOMPLETE"));
     }
 
     #[test]
