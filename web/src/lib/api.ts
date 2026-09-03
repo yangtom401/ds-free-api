@@ -110,7 +110,12 @@ export interface AccountStatus {
   mobile: string;
   state: string;
   last_released_ms: number;
+  cooldown_until_ms: number;
+  health_score: number;
   error_count: number;
+  success_count: number;
+  failure_count: number;
+  last_error?: string;
 }
 
 export interface AdminStatusResponse {

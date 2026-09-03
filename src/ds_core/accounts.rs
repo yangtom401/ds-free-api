@@ -63,6 +63,8 @@ pub struct AccountStatus {
     pub success_count: u64,
     /// 累计失败/限流请求数
     pub failure_count: u64,
+    /// 最近失败原因（仅 invalid/error 状态有值）
+    pub last_error: Option<String>,
 }
 
 pub struct Account {
@@ -82,6 +84,8 @@ pub struct Account {
     success_count: AtomicU64,
     /// 累计失败/限流请求数
     failure_count: AtomicU64,
+    /// 最近一次初始化/验证失败的原因（仅 Invalid/Error 状态时有值）
+    last_error: std::sync::RwLock<Option<String>>,
     /// 原始凭据（用于重新登录）
     creds: AccountConfig,
 }
@@ -120,7 +124,7 @@ impl Account {
     }
 
     /// 创建一个 Invalid 状态的账号（初始化失败时使用，仍加入池以便前台展示）
-    fn new_invalid(creds: AccountConfig) -> Self {
+    fn new_invalid(creds: AccountConfig, error: Option<String>) -> Self {
         Self {
             token: std::sync::RwLock::new(String::new().into()),
             email: creds.email.clone(),
@@ -132,6 +136,7 @@ impl Account {
             error_count: AtomicU8::new(MAX_ERROR_COUNT),
             success_count: AtomicU64::new(0),
             failure_count: AtomicU64::new(0),
+            last_error: std::sync::RwLock::new(error),
             creds,
         }
     }
@@ -248,7 +253,7 @@ impl AccountPool {
                         Err(e) => {
                             warn!(target: "ds_core::accounts", "账号 {} 初始化失败: {}", display_id, e);
                             // 即使初始化失败也加入池，标记为 Invalid 以便前台展示
-                            Account::new_invalid(creds.clone())
+                            Account::new_invalid(creds.clone(), Some(e.to_string()))
                         }
                     };
                     Some((display_id, Arc::new(account)))
@@ -289,10 +294,18 @@ impl AccountPool {
             return Err(PoolError::AlreadyExists(display_id));
         }
 
-        let account = init_account(creds, client, solver).await?;
-        let _id = account.display_id().to_string();
+        let account = match init_account(creds, client, solver).await {
+            Ok(account) => {
+                info!(target: "ds_core::accounts", "动态添加账号 {} 成功", display_id);
+                account
+            }
+            Err(e) => {
+                warn!(target: "ds_core::accounts", "动态添加账号 {} 初始化失败: {}，仍加入号池标记为 Invalid", display_id, e);
+                Account::new_invalid(creds.clone(), Some(e.to_string()))
+            }
+        };
+
         self.accounts.insert(display_id.clone(), Arc::new(account));
-        info!(target: "ds_core::accounts", "动态添加账号 {} 成功", display_id);
         Ok(display_id)
     }
 
@@ -456,6 +469,7 @@ impl AccountPool {
                     error_count: a.error_count.load(Ordering::Relaxed),
                     success_count: a.success_count.load(Ordering::Relaxed),
                     failure_count: a.failure_count.load(Ordering::Relaxed),
+                    last_error: a.last_error.read().unwrap().clone(),
                 }
             })
             .collect()
@@ -547,6 +561,7 @@ impl AccountPool {
                 account.error_count.store(0, Ordering::Relaxed);
                 account.health_score.store(100, Ordering::Relaxed);
                 account.cooldown_until.store(0, Ordering::Relaxed);
+                *account.last_error.write().unwrap() = None;
                 info!(target: "ds_core::accounts", "账号 {} 重新登录成功", display_id);
             }
             Err(e) => {
@@ -556,6 +571,7 @@ impl AccountPool {
                         .state
                         .store(AccountState::Invalid as u8, Ordering::Relaxed);
                     account.health_score.store(0, Ordering::Relaxed);
+                    *account.last_error.write().unwrap() = Some(e.to_string());
                     error!(target: "ds_core::accounts", "账号 {} 连续 {} 次重登失败，标记为 Invalid: {}", display_id, count, e);
                 } else {
                     warn!(target: "ds_core::accounts", "账号 {} 重登失败 ({}次): {}", display_id, count, e);
@@ -710,6 +726,7 @@ async fn try_init_account(
         error_count: AtomicU8::new(0),
         success_count: AtomicU64::new(0),
         failure_count: AtomicU64::new(0),
+        last_error: std::sync::RwLock::new(None),
         creds: creds.clone(),
     })
 }

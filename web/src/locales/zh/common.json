@@ -51,7 +51,17 @@
       "idle": "空闲",
       "busy": "忙碌",
       "error": "异常",
-      "invalid": "失效"
+      "invalid": "失效",
+      "tableAccount": "账号",
+      "tableState": "状态",
+      "tableSuccess": "成功",
+      "tableFailure": "失败",
+      "tableHealth": "健康",
+      "tableNote": "备注",
+      "stateIdle": "空闲",
+      "stateBusy": "忙碌",
+      "stateError": "异常",
+      "stateInvalid": "失效"
     }
   },
   "config": {

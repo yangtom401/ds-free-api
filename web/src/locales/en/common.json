@@ -51,7 +51,17 @@
       "idle": "Idle",
       "busy": "Busy",
       "error": "Error",
-      "invalid": "Invalid"
+      "invalid": "Invalid",
+      "tableAccount": "Account",
+      "tableState": "State",
+      "tableSuccess": "Success",
+      "tableFailure": "Failure",
+      "tableHealth": "Health",
+      "tableNote": "Note",
+      "stateIdle": "Idle",
+      "stateBusy": "Busy",
+      "stateError": "Error",
+      "stateInvalid": "Invalid"
     }
   },
   "config": {

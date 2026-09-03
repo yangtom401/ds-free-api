@@ -1,15 +1,13 @@
 import useSWR from 'swr';
 import { apiFetch, type AdminStatusResponse, type StatsSnapshot } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import {
-  Table,
+import { Table,
   TableBody,
   TableCell,
   TableHead,
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Badge } from '@/components/ui/badge';
 import {
   Activity,
   Clock,
@@ -228,25 +226,56 @@ export function DashboardPage() {
               <div className="text-sm text-muted-foreground">{t('dashboard.accountPool.invalid')}</div>
             </div>
           </div>
-          <div className="mt-4 flex flex-wrap gap-2">
-            {status?.accounts.map((a) => {
-              const isBusy = a.state === 'busy';
-              const isError = a.state === 'error';
-              const isInvalid = a.state === 'invalid';
-              const variant = isBusy ? 'default' : isError ? 'secondary' : isInvalid ? 'destructive' : 'secondary';
-              const className = isBusy
-                ? 'bg-amber-500/15 text-amber-700 border-amber-200'
-                : isError
-                ? 'bg-yellow-500/15 text-yellow-700 border-yellow-200'
-                : isInvalid
-                ? 'bg-red-500/15 text-red-700 border-red-200'
-                : 'bg-green-500/15 text-green-700 border-green-200';
-              return (
-                <Badge key={a.email || a.mobile} variant={variant} className={className}>
-                  {a.email || a.mobile}
-                </Badge>
-              );
-            })}
+          <div className="mt-4 overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>{t('dashboard.accountPool.tableAccount')}</TableHead>
+                  <TableHead>{t('dashboard.accountPool.tableState')}</TableHead>
+                  <TableHead className="text-right">{t('dashboard.accountPool.tableSuccess')}</TableHead>
+                  <TableHead className="text-right">{t('dashboard.accountPool.tableFailure')}</TableHead>
+                  <TableHead className="text-right">{t('dashboard.accountPool.tableHealth')}</TableHead>
+                  <TableHead>{t('dashboard.accountPool.tableNote')}</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {status?.accounts.map((a) => {
+                  const isBusy = a.state === 'busy';
+                  const isError = a.state === 'error';
+                  const isInvalid = a.state === 'invalid';
+                  const stateLabel = isBusy
+                    ? t('dashboard.accountPool.stateBusy')
+                    : isError
+                    ? t('dashboard.accountPool.stateError')
+                    : isInvalid
+                    ? t('dashboard.accountPool.stateInvalid')
+                    : t('dashboard.accountPool.stateIdle');
+                  const stateClass = isBusy
+                    ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300'
+                    : isError
+                    ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300'
+                    : isInvalid
+                    ? 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300'
+                    : 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300';
+                  return (
+                    <TableRow key={a.email || a.mobile}>
+                      <TableCell className="font-mono text-xs">{a.email || a.mobile}</TableCell>
+                      <TableCell>
+                        <span className={`px-2 py-0.5 rounded text-xs font-medium ${stateClass}`}>
+                          {stateLabel}
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-right text-green-600 tabular-nums">{a.success_count ?? 0}</TableCell>
+                      <TableCell className="text-right text-red-600 tabular-nums">{a.failure_count ?? 0}</TableCell>
+                      <TableCell className="text-right tabular-nums">{a.health_score ?? 0}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground max-w-[160px] truncate" title={a.last_error ?? ''}>
+                        {a.last_error ?? ''}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
           </div>
         </CardContent>
       </Card>

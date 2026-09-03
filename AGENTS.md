@@ -505,3 +505,53 @@ git tag v0.x.x
 git push origin v0.x.x
 # CI extracts changelog from CHANGELOG.md, creates GitHub release
 ```
+
+---
+
+## Development Checkpoint
+
+> Last updated: 2026-09-03  
+> Branch: main (local, not yet pushed)
+
+### Completed Changes (not yet committed)
+
+#### 1. Invalid account retention on add_account failure
+**File**: `src/ds_core/accounts.rs`, lines ~292-304
+
+When `AccountPool::add_account` encounters an `init_account` failure (e.g. account muted, bad credentials), instead of returning `Err(...)` and silently discarding the account, it now calls `Account::new_invalid(creds.clone())` and inserts the placeholder into `self.accounts`. This ensures all imported accounts (including failed ones) appear in the frontend dashboard.
+
+**Verified**: `cargo check --lib` ✓ | `cargo test --lib` ✓
+
+---
+
+### Pending Changes (next AI session should implement these)
+
+> Full implementation details with code snippets: see `docs/dev-handoff.md`
+
+#### Task 1: Account status detail table (HIGH PRIORITY)
+
+**User request**: Imported 20+ accounts, only a few show up; wants per-account status with failure reasons visible in the UI.
+
+**Backend** (`src/ds_core/accounts.rs`):
+- Add `last_error: std::sync::RwLock<Option<String>>` field to `Account` struct (L68-87)
+- Change `new_invalid(creds)` → `new_invalid(creds, error: Option<String>)` (L122-137)
+- Initialize `last_error: RwLock::new(None)` in normal `Account::new` path
+- Pass `Some(e.to_string())` to `new_invalid(...)` in `add_account` (L297-300) and `init()` batch path
+- Add `pub last_error: Option<String>` to `AccountStatus` struct (L48-66)
+- Map `last_error` in `account_statuses()` (L452-470)
+
+**Frontend** (`web/src/lib/api.ts`):
+- Extend `AccountStatus` interface to include: `cooldown_until_ms`, `health_score`, `success_count`, `failure_count`, `last_error?`
+
+**Frontend** (`web/src/pages/DashboardPage.tsx`, L231-250):
+- Replace Badge flex list with an HTML `<table>` showing: account ID | state badge | success count | failure count | health score | last_error reason
+
+**i18n** (optional, `web/src/locales/zh/common.json` + `en/common.json`):
+- Add table column label keys under `dashboard.accountPool.*`
+
+#### Task 2: Deploy to PVE LXC (needs user permission for git operations)
+
+- Target: LXC CTID `101`, IP `10.0.0.101`
+- Script: `LXC/deploy-to-pve.ps1`
+- Compile method: GitHub Actions (user approved "使用github编译")
+- **BLOCKED**: awaiting user's explicit `git commit` + `git push` permission
